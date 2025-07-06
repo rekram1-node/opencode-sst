@@ -54,7 +54,16 @@ export const RunCommand = cmd({
       })
   },
   handler: async (args) => {
-    const message = args.message.join(" ")
+    let message = args.message.join(" ")
+
+    // Check if input is piped
+    if (!process.stdin.isTTY) {
+      const stdinData = (await Bun.stdin.text()).trim()
+      if (stdinData) {
+        message = message ? `${message}\n${stdinData}` : stdinData
+      }
+    }
+
     await bootstrap({ cwd: process.cwd() }, async () => {
       const session = await (async () => {
         if (args.continue) {
@@ -73,7 +82,7 @@ export const RunCommand = cmd({
         return
       }
 
-      const isPiped = !process.stdout.isTTY
+      const shouldPipeOutput = !process.stdout.isTTY
 
       UI.empty()
       UI.println(UI.logo())
@@ -153,7 +162,7 @@ export const RunCommand = cmd({
         ],
       })
 
-      if (isPiped) {
+      if (shouldPipeOutput) {
         const match = result.parts.findLast((x) => x.type === "text")
         if (match) process.stdout.write(match.text)
       }
