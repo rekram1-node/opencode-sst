@@ -72,12 +72,15 @@ export namespace SystemPrompt {
 
     if (config.instructions) {
       for (const instruction of config.instructions) {
-        try {
-          const matches = await Filesystem.globUp(instruction, cwd, root)
-          found.push(...matches.map((x) => Bun.file(x).text()))
-        } catch {
-          continue // Skip invalid glob patterns
+        if (path.resolve(cwd) !== path.resolve(Global.Path.config)) {
+          await Filesystem.globUp(instruction, Global.Path.config, Global.Path.config)
+            .then((matches) => found.push(...matches.map((x) => Bun.file(x).text())))
+            .catch(() => {})
         }
+
+        await Filesystem.globUp(instruction, cwd, root)
+          .then((matches) => found.push(...matches.map((x) => Bun.file(x).text())))
+          .catch(() => {})
       }
     }
 
