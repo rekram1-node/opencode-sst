@@ -775,7 +775,17 @@ func (a appModel) executeCommand(command commands.Command) (tea.Model, tea.Cmd) 
 			return a, toast.NewErrorToast("Something went wrong, couldn't open editor")
 		}
 		tmpfile.Close()
-		c := exec.Command(editor, tmpfile.Name()) //nolint:gosec
+
+		// Test if editor supports --wait flag
+		testCmd := exec.Command(editor, "--wait", "--version")
+		var c *exec.Cmd
+		if err := testCmd.Run(); err == nil {
+			// Editor supports --wait
+			c = exec.Command(editor, "--wait", tmpfile.Name()) //nolint:gosec
+		} else {
+			// Editor doesn't support --wait, use without it
+			c = exec.Command(editor, tmpfile.Name()) //nolint:gosec
+		}
 		c.Stdin = os.Stdin
 		c.Stdout = os.Stdout
 		c.Stderr = os.Stderr
