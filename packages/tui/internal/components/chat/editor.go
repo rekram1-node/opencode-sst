@@ -72,6 +72,9 @@ func (m *editorComponent) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width - 4
+		// Set max viewport height to 1/3 of screen height
+		maxViewportHeight := max(3, msg.Height/3)
+		m.textarea.SetMaxViewportHeight(maxViewportHeight)
 		return m, nil
 	case spinner.TickMsg:
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -381,16 +384,7 @@ func (m *editorComponent) View() string {
 		width = min(width, 80)
 	}
 
-	if m.Lines() > 1 {
-		return lipgloss.Place(
-			width,
-			5,
-			lipgloss.Center,
-			lipgloss.Center,
-			"",
-			styles.WhitespaceStyle(theme.CurrentTheme().Background()),
-		)
-	}
+	// Always show the content now that we have viewport scrolling
 	return m.Content()
 }
 

@@ -195,6 +195,10 @@ type KeyMap struct {
 	CapitalizeWordForward key.Binding
 
 	TransposeCharacterBackward key.Binding
+
+	// Viewport scrolling keys
+	ScrollUp   key.Binding
+	ScrollDown key.Binding
 }
 
 // DefaultKeyMap returns the default set of key bindings for navigating and acting
@@ -290,6 +294,15 @@ func DefaultKeyMap() KeyMap {
 		TransposeCharacterBackward: key.NewBinding(
 			key.WithKeys("ctrl+t"),
 			key.WithHelp("ctrl+t", "transpose character backward"),
+		),
+
+		ScrollUp: key.NewBinding(
+			key.WithKeys("alt+up", "page_up"),
+			key.WithHelp("alt+up", "scroll up"),
+		),
+		ScrollDown: key.NewBinding(
+			key.WithKeys("alt+down", "page_down"),
+			key.WithHelp("alt+down", "scroll down"),
 		),
 	}
 }
@@ -522,6 +535,11 @@ type Model struct {
 
 	// rune sanitizer for input.
 	rsan Sanitizer
+
+	// Viewport scrolling state
+	viewportOffset    int  // Current scroll position (in display lines)
+	maxViewportHeight int  // Maximum viewport height (1/3 of screen height)
+	autoScroll        bool // Whether to auto-scroll to keep cursor visible
 }
 
 // New creates a new model with default settings.
@@ -547,6 +565,11 @@ func New() Model {
 		focus: false,
 		col:   0,
 		row:   0,
+
+		// Initialize viewport scrolling state
+		viewportOffset:    0,
+		maxViewportHeight: 10, // Default reasonable height
+		autoScroll:        true,
 	}
 
 	m.SetWidth(defaultWidth)
@@ -868,9 +891,10 @@ func (m *Model) Length() int {
 	return l + len(m.value) - 1
 }
 
-// LineCount returns the number of lines that are currently in the text input.
+// LineCount returns the number of lines that are currently visible in the viewport.
+// This is used for layout calculations to prevent the textarea from growing indefinitely.
 func (m *Model) LineCount() int {
-	return m.ContentHeight()
+	return m.ViewportHeight()
 }
 
 // Line returns the line position.
@@ -907,6 +931,7 @@ func (m *Model) Newline() {
 	}
 	m.col = clamp(m.col, 0, len(m.value[m.row]))
 	m.splitLine(m.row, m.col)
+	m.ensureCursorVisible()
 }
 
 // mapVisualOffsetToSliceIndex converts a visual column offset to a slice index.
@@ -982,6 +1007,7 @@ func (m *Model) CursorDown() {
 		colInLine = len(targetLineContent)
 	foundNextLine:
 		m.col = colInLine // startCol is 0 for the first wrapped line
+		m.ensureCursorVisible()
 	} else if li.RowOffset+1 < li.Height {
 		// Move to the next wrapped line within the same model line
 		grid := m.memoizedWrap(m.value[m.row], m.width)
@@ -1111,6 +1137,7 @@ func (m *Model) SetCursorColumn(col int) {
 	// Any time that we move the cursor horizontally we need to reset the last
 	// offset so that the horizontal position when navigating is adjusted.
 	m.lastCharOffset = 0
+	m.ensureCursorVisible()
 }
 
 // CursorStart moves the cursor to the start of the input field.
@@ -1525,14 +1552,94 @@ func (m Model) ContentHeight() int {
 
 // SetHeight sets the height of the textarea.
 func (m *Model) SetHeight(h int) {
-	// Calculate the actual content height
-	contentHeight := m.ContentHeight()
+	// Use viewport height instead of growing indefinitely
+	m.height = m.ViewportHeight()
+}
 
-	// Use the content height as the actual height
-	if m.MaxHeight > 0 {
-		m.height = clamp(contentHeight, minHeight, m.MaxHeight)
-	} else {
-		m.height = max(contentHeight, minHeight)
+// SetMaxViewportHeight sets the maximum viewport height (typically 1/3 of screen height)
+func (m *Model) SetMaxViewportHeight(h int) {
+	m.maxViewportHeight = max(minHeight, h)
+	m.ensureCursorVisible()
+}
+
+// ViewportHeight returns the current viewport height
+func (m *Model) ViewportHeight() int {
+	contentHeight := m.ContentHeight()
+	if contentHeight <= m.maxViewportHeight {
+		return contentHeight
+	}
+	return m.maxViewportHeight
+}
+
+// maxViewportOffset returns the maximum viewport offset
+func (m *Model) maxViewportOffset() int {
+	contentHeight := m.ContentHeight()
+	viewportHeight := m.ViewportHeight()
+	return max(0, contentHeight-viewportHeight)
+}
+
+// AtTop returns whether the viewport is at the top
+func (m *Model) AtTop() bool {
+	return m.viewportOffset <= 0
+}
+
+// AtBottom returns whether the viewport is at the bottom
+func (m *Model) AtBottom() bool {
+	return m.viewportOffset >= m.maxViewportOffset()
+}
+
+// SetViewportOffset sets the viewport offset with boundary checking
+func (m *Model) SetViewportOffset(offset int) {
+	m.viewportOffset = clamp(offset, 0, m.maxViewportOffset())
+}
+
+// ScrollUp scrolls the viewport up by n lines
+func (m *Model) ScrollUp(n int) {
+	m.SetViewportOffset(m.viewportOffset - n)
+}
+
+// ScrollDown scrolls the viewport down by n lines
+func (m *Model) ScrollDown(n int) {
+	m.SetViewportOffset(m.viewportOffset + n)
+}
+
+// ScrollToTop scrolls to the top of the content
+func (m *Model) ScrollToTop() {
+	m.SetViewportOffset(0)
+}
+
+// ScrollToBottom scrolls to the bottom of the content
+func (m *Model) ScrollToBottom() {
+	m.SetViewportOffset(m.maxViewportOffset())
+}
+
+// ScrollToCursor scrolls to ensure the cursor is visible
+func (m *Model) ScrollToCursor() {
+	cursorLine := m.cursorLineNumber()
+	viewportHeight := m.ViewportHeight()
+
+	// If cursor is above viewport, scroll up to show it
+	if cursorLine < m.viewportOffset {
+		m.SetViewportOffset(cursorLine)
+	}
+	// If cursor is below viewport, scroll down to show it
+	if cursorLine >= m.viewportOffset+viewportHeight {
+		m.SetViewportOffset(cursorLine - viewportHeight + 1)
+	}
+}
+
+// ensureCursorVisible ensures the cursor is visible when auto-scroll is enabled
+func (m *Model) ensureCursorVisible() {
+	if m.autoScroll {
+		m.ScrollToCursor()
+	}
+}
+
+// SetAutoScroll enables or disables auto-scrolling to keep cursor visible
+func (m *Model) SetAutoScroll(enabled bool) {
+	m.autoScroll = enabled
+	if enabled {
+		m.ensureCursorVisible()
 	}
 }
 
@@ -1637,8 +1744,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.capitalizeRight()
 		case key.Matches(msg, m.KeyMap.TransposeCharacterBackward):
 			m.transposeLeft()
+		case key.Matches(msg, m.KeyMap.ScrollUp):
+			m.ScrollUp(3)          // Scroll up 3 lines
+			m.SetAutoScroll(false) // Disable auto-scroll when manually scrolling
+		case key.Matches(msg, m.KeyMap.ScrollDown):
+			m.ScrollDown(3)        // Scroll down 3 lines
+			m.SetAutoScroll(false) // Disable auto-scroll when manually scrolling
 
 		default:
+			// Re-enable auto-scroll when user starts typing
+			if msg.Text != "" {
+				m.SetAutoScroll(true)
+			}
 			m.InsertRunesFromUserInput([]rune(msg.Text))
 		}
 
@@ -1672,15 +1789,49 @@ func (m Model) View() string {
 	var (
 		s                strings.Builder
 		style            lipgloss.Style
-		newLines         int
 		widestLineNumber int
 		lineInfo         = m.LineInfo()
 		styles           = m.activeStyle()
 	)
 
+	// Calculate viewport boundaries
+	viewportHeight := m.ViewportHeight()
+	viewportStart := m.viewportOffset
+	viewportEnd := viewportStart + viewportHeight
+
+	// Build all display lines first to determine which ones are visible
+	var allDisplayLines []displayLineInfo
 	displayLine := 0
+
 	for l, line := range m.value {
 		wrappedLines := m.memoizedWrap(line, m.width)
+
+		for wl, wrappedLine := range wrappedLines {
+			allDisplayLines = append(allDisplayLines, displayLineInfo{
+				modelLine:    l,
+				wrappedIndex: wl,
+				wrappedLine:  wrappedLine,
+				displayIndex: displayLine,
+			})
+			displayLine++
+		}
+	}
+
+	// Render only the visible lines within the viewport
+	renderedLines := 0
+	for _, lineData := range allDisplayLines {
+		// Skip lines before viewport
+		if lineData.displayIndex < viewportStart {
+			continue
+		}
+		// Stop rendering lines after viewport
+		if lineData.displayIndex >= viewportEnd {
+			break
+		}
+
+		l := lineData.modelLine
+		wl := lineData.wrappedIndex
+		wrappedLine := lineData.wrappedLine
 
 		if m.row == l {
 			style = styles.computedCursorLine()
@@ -1688,93 +1839,96 @@ func (m Model) View() string {
 			style = styles.computedText()
 		}
 
-		for wl, wrappedLine := range wrappedLines {
-			prompt := m.promptView(displayLine)
-			prompt = styles.computedPrompt().Render(prompt)
-			s.WriteString(style.Render(prompt))
-			displayLine++
+		prompt := m.promptView(lineData.displayIndex)
+		prompt = styles.computedPrompt().Render(prompt)
+		s.WriteString(style.Render(prompt))
 
-			var ln string
-			if m.ShowLineNumbers {
-				if wl == 0 { // normal line
-					isCursorLine := m.row == l
-					s.WriteString(m.lineNumberView(l+1, isCursorLine))
-				} else { // soft wrapped line
-					isCursorLine := m.row == l
-					s.WriteString(m.lineNumberView(-1, isCursorLine))
-				}
+		var ln string
+		if m.ShowLineNumbers {
+			if wl == 0 { // normal line
+				isCursorLine := m.row == l
+				s.WriteString(m.lineNumberView(l+1, isCursorLine))
+			} else { // soft wrapped line
+				isCursorLine := m.row == l
+				s.WriteString(m.lineNumberView(-1, isCursorLine))
 			}
+		}
 
-			// Note the widest line number for padding purposes later.
-			lnw := uniseg.StringWidth(ln)
-			if lnw > widestLineNumber {
-				widestLineNumber = lnw
-			}
+		// Note the widest line number for padding purposes later.
+		lnw := uniseg.StringWidth(ln)
+		if lnw > widestLineNumber {
+			widestLineNumber = lnw
+		}
 
-			wrappedLineStr := interfacesToString(wrappedLine)
-			strwidth := uniseg.StringWidth(wrappedLineStr)
-			padding := m.width - strwidth
-			// If the trailing space causes the line to be wider than the
-			// width, we should not draw it to the screen since it will result
-			// in an extra space at the end of the line which can look off when
-			// the cursor line is showing.
-			if strwidth > m.width {
-				// The character causing the line to be wider than the width is
-				// guaranteed to be a space since any other character would
-				// have been wrapped.
-				wrappedLineStr = strings.TrimSuffix(wrappedLineStr, " ")
-				padding = m.width - uniseg.StringWidth(wrappedLineStr)
-			}
+		wrappedLineStr := interfacesToString(wrappedLine)
+		strwidth := uniseg.StringWidth(wrappedLineStr)
+		padding := m.width - strwidth
+		// If the trailing space causes the line to be wider than the
+		// width, we should not draw it to the screen since it will result
+		// in an extra space at the end of the line which can look off when
+		// the cursor line is showing.
+		if strwidth > m.width {
+			// The character causing the line to be wider than the width is
+			// guaranteed to be a space since any other character would
+			// have been wrapped.
+			wrappedLineStr = strings.TrimSuffix(wrappedLineStr, " ")
+			padding = m.width - uniseg.StringWidth(wrappedLineStr)
+		}
 
-			if m.row == l && lineInfo.RowOffset == wl {
-				// Render the part of the line before the cursor
-				s.WriteString(
-					m.renderLineWithAttachments(
-						wrappedLine[:lineInfo.ColumnOffset],
-						style,
-					),
-				)
+		if m.row == l && lineInfo.RowOffset == wl {
+			// Render the part of the line before the cursor
+			s.WriteString(
+				m.renderLineWithAttachments(
+					wrappedLine[:lineInfo.ColumnOffset],
+					style,
+				),
+			)
 
-				if m.col >= len(line) && lineInfo.CharOffset >= m.width {
-					m.virtualCursor.SetChar(" ")
-					s.WriteString(m.virtualCursor.View())
-				} else if lineInfo.ColumnOffset < len(wrappedLine) {
-					// Render the item under the cursor
-					item := wrappedLine[lineInfo.ColumnOffset]
-					if att, ok := item.(*attachment.Attachment); ok {
-						// Item at cursor is an attachment. Render it with the selection style.
-						// This becomes the "cursor" visually.
-						s.WriteString(m.Styles.SelectedAttachment.Render(att.Display))
-					} else {
-						// Item at cursor is a rune. Render it with the virtual cursor.
-						m.virtualCursor.SetChar(string(item.(rune)))
-						s.WriteString(style.Render(m.virtualCursor.View()))
-					}
-
-					// Render the part of the line after the cursor
-					s.WriteString(m.renderLineWithAttachments(wrappedLine[lineInfo.ColumnOffset+1:], style))
+			if m.col >= len(m.value[l]) && lineInfo.CharOffset >= m.width {
+				m.virtualCursor.SetChar(" ")
+				s.WriteString(m.virtualCursor.View())
+			} else if lineInfo.ColumnOffset < len(wrappedLine) {
+				// Render the item under the cursor
+				item := wrappedLine[lineInfo.ColumnOffset]
+				if att, ok := item.(*attachment.Attachment); ok {
+					// Item at cursor is an attachment. Render it with the selection style.
+					// This becomes the "cursor" visually.
+					s.WriteString(m.Styles.SelectedAttachment.Render(att.Display))
 				} else {
-					// Cursor is at the end of the line
-					m.virtualCursor.SetChar(" ")
+					// Item at cursor is a rune. Render it with the virtual cursor.
+					m.virtualCursor.SetChar(string(item.(rune)))
 					s.WriteString(style.Render(m.virtualCursor.View()))
 				}
-			} else {
-				s.WriteString(m.renderLineWithAttachments(wrappedLine, style))
-			}
 
-			s.WriteString(style.Render(strings.Repeat(" ", max(0, padding))))
+				// Render the part of the line after the cursor
+				s.WriteString(m.renderLineWithAttachments(wrappedLine[lineInfo.ColumnOffset+1:], style))
+			} else {
+				// Cursor is at the end of the line
+				m.virtualCursor.SetChar(" ")
+				s.WriteString(style.Render(m.virtualCursor.View()))
+			}
+		} else {
+			s.WriteString(m.renderLineWithAttachments(wrappedLine, style))
+		}
+
+		s.WriteString(style.Render(strings.Repeat(" ", max(0, padding))))
+
+		// Add newline except for the last rendered line
+		renderedLines++
+		if renderedLines < viewportHeight && lineData.displayIndex < viewportEnd-1 {
 			s.WriteRune('\n')
-			newLines++
 		}
 	}
 
-	// Remove the trailing newline from the last line
-	result := s.String()
-	if len(result) > 0 && result[len(result)-1] == '\n' {
-		result = result[:len(result)-1]
-	}
+	return styles.Base.Render(s.String())
+}
 
-	return styles.Base.Render(result)
+// displayLineInfo holds information about a display line for viewport rendering
+type displayLineInfo struct {
+	modelLine    int   // Index in m.value
+	wrappedIndex int   // Index within wrapped lines for this model line
+	wrappedLine  []any // The actual wrapped line content
+	displayIndex int   // Global display line index
 }
 
 // promptView renders a single line of the prompt.
