@@ -24,7 +24,6 @@ import (
 var Version = "dev"
 
 func main() {
-	// hello
 	version := Version
 	if version != "dev" && !strings.HasPrefix(Version, "v") {
 		version = "v" + Version
