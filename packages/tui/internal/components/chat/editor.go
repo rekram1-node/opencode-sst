@@ -145,18 +145,19 @@ func (m *editorComponent) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		text = strings.ReplaceAll(text, "\\", "")
-		text, err := strconv.Unquote(`"` + text + `"`)
-		if err != nil {
-			slog.Error("Failed to unquote text", "error", err)
-			text := string(msg)
-			if m.shouldSummarizePastedText(text) {
-				m.handleLongPaste(text)
-			} else {
-				m.textarea.InsertRunesFromUserInput([]rune(msg))
+		text = strings.TrimSpace(text)
+
+		// Try to unquote if quoted, otherwise use as-is
+		if strings.HasPrefix(text, `"`) && strings.HasSuffix(text, `"`) {
+			if unquoted, err := strconv.Unquote(text); err == nil {
+				text = unquoted
 			}
-			return m, nil
 		}
-		if _, err := os.Stat(text); err != nil {
+		if !filepath.IsAbs(text) {
+			text = filepath.Join(m.app.Info.Path.Cwd, text)
+		}
+		filePath := text
+		if _, err := os.Stat(filePath); err != nil {
 			slog.Error("Failed to paste file", "error", err)
 			text := string(msg)
 			if m.shouldSummarizePastedText(text) {
@@ -167,7 +168,7 @@ func (m *editorComponent) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		filePath := text
+		// filePath := text
 
 		attachment := m.createAttachmentFromFile(filePath)
 		if attachment == nil {
