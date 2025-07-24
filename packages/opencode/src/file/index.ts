@@ -98,7 +98,7 @@ export namespace File {
   export async function read(file: string) {
     using _ = log.time("read", { file })
     const app = App.info()
-    const full = path.join(app.path.cwd, file)
+    const full = path.isAbsolute(file) ? file : path.join(app.path.cwd, file)
     const content = await Bun.file(full)
       .text()
       .catch(() => "")

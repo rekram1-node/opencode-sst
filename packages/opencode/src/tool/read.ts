@@ -21,7 +21,7 @@ export const ReadTool = Tool.define({
   async execute(params, ctx) {
     let filePath = params.filePath
     if (!path.isAbsolute(filePath)) {
-      filePath = path.join(process.cwd(), filePath)
+      filePath = path.join(App.info().path.cwd, filePath)
     }
 
     const file = Bun.file(filePath)

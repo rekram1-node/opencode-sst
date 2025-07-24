@@ -388,9 +388,21 @@ export namespace Session {
             case "file:":
               // have to normalize, symbol search returns absolute paths
               // Decode the pathname since URL constructor doesn't automatically decode it
-              const pathname = decodeURIComponent(url.pathname)
-              const relativePath = pathname.replace(app.path.cwd, ".")
-              const filePath = path.join(app.path.cwd, relativePath)
+              const pathname = decodeURIComponent(url.pathname).replace(/^\/+/, "/")
+              let filePath: string
+              if (path.isAbsolute(pathname)) {
+                // If it's an absolute path within the project, make it relative
+                if (pathname.startsWith(app.path.cwd)) {
+                  const relativePath = path.relative(app.path.cwd, pathname)
+                  filePath = path.join(app.path.cwd, relativePath)
+                } else {
+                  // If it's an absolute path outside the project, use it directly
+                  filePath = pathname
+                }
+              } else {
+                // If it's already relative, join with cwd
+                filePath = path.join(app.path.cwd, pathname)
+              }
 
               if (part.mime === "text/plain") {
                 let offset: number | undefined = undefined

@@ -705,7 +705,7 @@ func (m *editorComponent) createAttachmentFromFile(filePath string) *attachment.
 			ID:        uuid.NewString(),
 			Type:      "file",
 			Display:   "@" + filePath,
-			URL:       fmt.Sprintf("file://./%s", filePath),
+			URL:       fmt.Sprintf("file://%s", absolutePath),
 			Filename:  filePath,
 			MediaType: mediaType,
 			Source: &attachment.FileSource{
